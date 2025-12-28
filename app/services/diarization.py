@@ -171,7 +171,7 @@ class DiarizationService:
                     audio_dict,
                     **diarization_params
                 ),
-                timeout=1800  # 30 minute timeout
+                timeout=3600  # 60 minute timeout
             )
 
             # Extract speaker segments
