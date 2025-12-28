@@ -1,0 +1,46 @@
+# Web Framework
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+python-multipart==0.0.12  # Required for file uploads
+
+# Data Validation
+pydantic==2.9.2
+pydantic-settings==2.6.1
+
+# Audio Processing
+ffmpeg-python==0.2.0
+
+# Transcription (Whisper) - Phase 2
+openai-whisper>=20231117
+
+# Diarization (Pyannote) - Phase 3
+pyannote.audio>=3.1.0
+huggingface-hub>=0.20.0
+
+# ML/AI Libraries
+torch>=2.0.0
+torchaudio>=2.0.0
+
+# Utility Libraries
+python-dotenv==1.0.1
+aiofiles==24.1.0  # Async file operations
+
+# Testing
+pytest==8.3.4
+pytest-asyncio==0.24.0
+httpx==0.28.1  # For testing FastAPI endpoints
+
+# Development Tools
+black>=23.0.0
+flake8>=6.0.0
+
+# Database (Phase 5)
+sqlalchemy>=2.0.36  # Python 3.13 compatible version
+psycopg[binary]>=3.2.0  # PostgreSQL driver (psycopg3 - better Python 3.13 support)
+alembic>=1.13.0  # Database migrations
+
+# Task Queue (Phase 5)
+celery[redis]==5.3.4  # Background task processing (includes redis dependency)
+
+# Production Server (Phase 5)
+gunicorn==21.2.0  # Production WSGI server

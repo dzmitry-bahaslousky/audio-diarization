@@ -1,0 +1,310 @@
+"""Repository for transcription job data access with automatic transaction management."""
+
+from contextlib import contextmanager
+from datetime import datetime
+from typing import Optional, List
+from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError
+import logging
+
+from app.models.database import TranscriptionJob
+from app.models.schemas import TranscriptionStatus
+from app.exceptions import JobCreationError, JobNotFoundError, DatabaseConnectionError
+
+logger = logging.getLogger(__name__)
+
+
+class TranscriptionRepository:
+    """Handles all database operations for transcription jobs with transaction safety."""
+
+    def __init__(self, db: Session):
+        """
+        Initialize repository with database session.
+
+        Args:
+            db: SQLAlchemy session
+        """
+        self.db = db
+
+    @contextmanager
+    def transaction(self):
+        """
+        Context manager for database transactions with automatic rollback.
+
+        Usage:
+            with repo.transaction():
+                # Database operations
+                self.db.add(...)
+                # Automatic commit on success, rollback on error
+
+        Raises:
+            DatabaseConnectionError: If database error occurs
+        """
+        try:
+            yield self.db
+            self.db.commit()
+            logger.debug("Transaction committed successfully")
+        except SQLAlchemyError as e:
+            logger.error(f"Database error, rolling back transaction: {e}")
+            self.db.rollback()
+            raise DatabaseConnectionError(f"Database operation failed: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error, rolling back transaction: {e}")
+            self.db.rollback()
+            raise
+
+    def create_job(
+        self,
+        filename: str,
+        upload_path: str,
+        whisper_model: str,
+        language: Optional[str] = None,
+        num_speakers: Optional[int] = None
+    ) -> TranscriptionJob:
+        """
+        Create a new transcription job with transaction safety.
+
+        Args:
+            filename: Original filename
+            upload_path: Path to uploaded file
+            whisper_model: Whisper model size
+            language: Optional language code
+            num_speakers: Optional number of speakers hint
+
+        Returns:
+            TranscriptionJob: Created job object
+
+        Raises:
+            JobCreationError: If job creation fails
+        """
+        try:
+            with self.transaction():
+                job = TranscriptionJob(
+                    filename=filename,
+                    status=TranscriptionStatus.PENDING,
+                    whisper_model=whisper_model,
+                    language=language,
+                    num_speakers=num_speakers,
+                    upload_path=upload_path,
+                    created_at=datetime.utcnow()
+                )
+                self.db.add(job)
+                self.db.flush()  # Get ID before commit
+                self.db.refresh(job)
+                logger.info(f"Created job {job.id} for file {filename}")
+                return job
+        except DatabaseConnectionError as e:
+            logger.error(f"Failed to create job for {filename}: {e}")
+            raise JobCreationError(f"Could not create transcription job: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error creating job: {e}")
+            raise JobCreationError(f"Failed to create job: {e}")
+
+    def get_job(self, job_id: str) -> Optional[TranscriptionJob]:
+        """
+        Retrieve job by ID.
+
+        Args:
+            job_id: Job identifier
+
+        Returns:
+            TranscriptionJob or None if not found
+
+        Raises:
+            DatabaseConnectionError: If database error occurs
+        """
+        try:
+            job = self.db.query(TranscriptionJob).filter(
+                TranscriptionJob.id == job_id
+            ).first()
+
+            if job:
+                logger.debug(f"Retrieved job {job_id}, status: {job.status}")
+            else:
+                logger.warning(f"Job {job_id} not found")
+
+            return job
+        except SQLAlchemyError as e:
+            logger.error(f"Failed to retrieve job {job_id}: {e}")
+            raise DatabaseConnectionError(f"Failed to retrieve job: {e}")
+
+    def update_status(
+        self,
+        job_id: str,
+        status: TranscriptionStatus,
+        error_message: Optional[str] = None
+    ) -> bool:
+        """
+        Update job status with transaction safety.
+
+        Args:
+            job_id: Job identifier
+            status: New status
+            error_message: Optional error message for failures
+
+        Returns:
+            bool: True if updated, False if job not found
+
+        Raises:
+            DatabaseConnectionError: If database error occurs
+        """
+        try:
+            with self.transaction():
+                job = self.get_job(job_id)
+                if not job:
+                    logger.error(f"Cannot update status: job {job_id} not found")
+                    return False
+
+                old_status = job.status
+                job.status = status
+
+                if error_message:
+                    job.error_message = error_message
+
+                # Set completed_at for terminal states
+                if status in [TranscriptionStatus.COMPLETED, TranscriptionStatus.FAILED]:
+                    job.completed_at = datetime.utcnow()
+
+                logger.info(
+                    f"Updated job {job_id} status: {old_status} -> {status}"
+                    + (f" (error: {error_message})" if error_message else "")
+                )
+
+                return True
+        except DatabaseConnectionError:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to update status for job {job_id}: {e}")
+            raise DatabaseConnectionError(f"Failed to update job status: {e}")
+
+    def update_results(
+        self,
+        job_id: str,
+        audio_duration: float,
+        detected_language: str,
+        detected_speakers: int,
+        segments: List[dict],
+        full_text: str,
+        speaker_timeline: str,
+        speaker_groups: dict,
+        wav_path: Optional[str] = None
+    ) -> bool:
+        """
+        Update job with processing results and mark as completed.
+
+        Args:
+            job_id: Job identifier
+            audio_duration: Duration of audio in seconds
+            detected_language: Detected language code
+            detected_speakers: Number of detected speakers
+            segments: List of aligned segments
+            full_text: Complete transcription text
+            speaker_timeline: Formatted speaker timeline
+            speaker_groups: Segments grouped by speaker
+            wav_path: Optional path to converted WAV file
+
+        Returns:
+            bool: True if updated, False if job not found
+
+        Raises:
+            DatabaseConnectionError: If database error occurs
+        """
+        try:
+            with self.transaction():
+                job = self.get_job(job_id)
+                if not job:
+                    logger.error(f"Cannot update results: job {job_id} not found")
+                    return False
+
+                job.status = TranscriptionStatus.COMPLETED
+                job.completed_at = datetime.utcnow()
+                job.audio_duration = audio_duration
+                job.detected_language = detected_language
+                job.detected_speakers = detected_speakers
+                job.segments = segments
+                job.full_text = full_text
+                job.speaker_timeline = speaker_timeline
+                job.speaker_groups = speaker_groups
+
+                if wav_path:
+                    job.wav_path = wav_path
+
+                logger.info(
+                    f"Updated job {job_id} with results: "
+                    f"{len(segments)} segments, {detected_speakers} speakers, "
+                    f"{audio_duration:.2f}s duration"
+                )
+
+                return True
+        except DatabaseConnectionError:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to update results for job {job_id}: {e}")
+            raise DatabaseConnectionError(f"Failed to update job results: {e}")
+
+    def delete_job(self, job_id: str) -> bool:
+        """
+        Delete a job from the database.
+
+        Args:
+            job_id: Job identifier
+
+        Returns:
+            bool: True if deleted, False if job not found
+
+        Raises:
+            DatabaseConnectionError: If database error occurs
+        """
+        try:
+            with self.transaction():
+                job = self.get_job(job_id)
+                if not job:
+                    logger.warning(f"Cannot delete: job {job_id} not found")
+                    return False
+
+                self.db.delete(job)
+                logger.info(f"Deleted job {job_id}")
+
+                return True
+        except DatabaseConnectionError:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to delete job {job_id}: {e}")
+            raise DatabaseConnectionError(f"Failed to delete job: {e}")
+
+    def list_jobs(
+        self,
+        status: Optional[TranscriptionStatus] = None,
+        limit: int = 100,
+        offset: int = 0
+    ) -> List[TranscriptionJob]:
+        """
+        List jobs with optional filtering.
+
+        Args:
+            status: Optional status filter
+            limit: Maximum number of jobs to return
+            offset: Number of jobs to skip
+
+        Returns:
+            List of TranscriptionJob objects
+
+        Raises:
+            DatabaseConnectionError: If database error occurs
+        """
+        try:
+            query = self.db.query(TranscriptionJob)
+
+            if status:
+                query = query.filter(TranscriptionJob.status == status)
+
+            query = query.order_by(TranscriptionJob.created_at.desc())
+            query = query.limit(limit).offset(offset)
+
+            jobs = query.all()
+            logger.debug(f"Listed {len(jobs)} jobs (status={status}, limit={limit})")
+
+            return jobs
+        except SQLAlchemyError as e:
+            logger.error(f"Failed to list jobs: {e}")
+            raise DatabaseConnectionError(f"Failed to list jobs: {e}")
