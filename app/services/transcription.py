@@ -153,7 +153,7 @@ class TranscriptionService:
                     word_timestamps=True,  # Enable word-level timestamps
                     verbose=False
                 ),
-                timeout=1800  # 30 minutes
+                timeout=3600  # 60 minutes
             )
 
             # Validate result
