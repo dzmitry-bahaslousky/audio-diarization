@@ -28,16 +28,16 @@ class TranscriptionJob(Base):
     # Processing parameters
     whisper_model = Column(String(50), nullable=False)
     language = Column(String(10), nullable=True)
-    num_speakers = Column(Integer, nullable=True)
+    num_speakers = Column(Integer, nullable=True)  # Hint for expected speakers
 
     # Results (stored as JSON)
     audio_duration = Column(Float, nullable=True)
     detected_language = Column(String(10), nullable=True)
-    detected_speakers = Column(Integer, nullable=True)
-    segments = Column(JSON, nullable=True)  # List of segment dicts
+    detected_speakers = Column(Integer, nullable=True)  # Actual detected speaker count
+    segments = Column(JSON, nullable=True)  # List of segment dicts with speaker labels
     full_text = Column(Text, nullable=True)
-    speaker_timeline = Column(Text, nullable=True)
-    speaker_groups = Column(JSON, nullable=True)
+    speaker_timeline = Column(Text, nullable=True)  # Human-readable speaker timeline
+    speaker_groups = Column(JSON, nullable=True)  # Segments grouped by speaker
 
     # Error handling
     error_message = Column(Text, nullable=True)

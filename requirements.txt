@@ -10,12 +10,9 @@ pydantic-settings==2.6.1
 # Audio Processing
 ffmpeg-python==0.2.0
 
-# Transcription (Whisper) - Phase 2
-openai-whisper>=20231117
-
-# Diarization (Pyannote) - Phase 3
-pyannote.audio>=3.1.0
-huggingface-hub>=0.20.0
+# Transcription (WhisperX - includes transcription, alignment, and diarization)
+whisperx
+huggingface-hub  # Required for WhisperX alignment and diarization models
 
 # ML/AI Libraries
 torch>=2.0.0

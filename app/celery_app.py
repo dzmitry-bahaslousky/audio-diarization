@@ -5,14 +5,32 @@ from pathlib import Path
 import logging
 import shutil
 
+# Fix PyTorch 2.6 weights_only=True default for model loading
+# Monkey-patch torch.load to use weights_only=False for trusted model sources
+# MUST be done before importing any model-loading code
+import torch
+
+_original_torch_load = torch.load
+
+def _trusted_load(*args, **kwargs):
+    """Wrapper for torch.load that defaults to weights_only=False.
+
+    PyTorch 2.6+ defaults to weights_only=True for security, but WhisperX
+    models use pickle features that require weights_only=False.
+    This is safe for models from trusted sources (OpenAI, HuggingFace).
+    """
+    kwargs['weights_only'] = False
+    return _original_torch_load(*args, **kwargs)
+
+torch.load = _trusted_load
+print("[CELERY INIT] Patched torch.load to use weights_only=False for model loading")
+
 from app.config import settings
 from app.database import get_repository
 from app.repositories.transcription_repository import TranscriptionRepository
 from app.models.schemas import TranscriptionStatus
 from app.services.audio_processor import AudioProcessor
 from app.services.transcription import TranscriptionService
-from app.services.diarization import DiarizationService
-from app.services.alignment import AlignmentService
 from app.exceptions import (
     TransientError,
     PermanentError,
@@ -21,8 +39,8 @@ from app.exceptions import (
     InvalidAudioError,
     InsufficientDiskSpaceError,
     TranscriptionError,
-    DiarizationError,
-    AlignmentError
+    AlignmentError,
+    DiarizationError
 )
 from datetime import datetime
 import asyncio
@@ -51,8 +69,6 @@ celery_app.conf.update(
 # These are initialized once per worker process and reused across tasks
 audio_processor = AudioProcessor()
 transcription_service = TranscriptionService()
-diarization_service = DiarizationService()
-alignment_service = AlignmentService()
 
 
 def check_disk_space(min_free_gb: float = 5.0):
@@ -89,7 +105,7 @@ def check_disk_space(min_free_gb: float = 5.0):
 @celery_app.task(
     bind=True,
     name="process_transcription",
-    autoretry_for=(TransientError, ModelLoadError, AudioProcessingError),
+    autoretry_for=(TransientError, ModelLoadError, AudioProcessingError, AlignmentError, DiarizationError),
     retry_backoff=True,  # Exponential backoff
     retry_backoff_max=600,  # Max 10 minutes between retries
     retry_jitter=True,  # Add randomness to prevent thundering herd
@@ -153,14 +169,14 @@ def process_transcription_task(self, job_id: str):
         logger.info(f"Job {job_id} completed successfully")
         should_cleanup = True  # Success - cleanup files
 
-    except (DiarizationError, TranscriptionError, AlignmentError) as e:
+    except TranscriptionError as e:
         # ML processing errors are permanent - don't retry
-        # (timeout, model failures, alignment issues won't fix themselves)
-        logger.error(f"ML processing error for job {job_id}: {e}")
+        # (timeout, model failures won't fix themselves)
+        logger.error(f"Transcription error for job {job_id}: {e}")
         with get_repository(TranscriptionRepository) as repo:
-            repo.update_status(job_id, TranscriptionStatus.FAILED, f"Processing error: {e}")
+            repo.update_status(job_id, TranscriptionStatus.FAILED, f"Transcription error: {e}")
         should_cleanup = True  # Cleanup on permanent error
-        raise PermanentError(f"ML processing failed: {e}")
+        raise PermanentError(f"Transcription failed: {e}")
 
     except PermanentError as e:
         # Don't retry permanent errors (invalid audio, disk space, etc.)
@@ -218,10 +234,10 @@ async def _process_audio_async(
     wav_path: Path,
     language: str,
     whisper_model: str,
-    num_speakers: int
+    num_speakers: int = None
 ) -> None:
     """
-    Async helper for audio processing with comprehensive error handling.
+    Async helper for audio processing with WhisperX transcription and diarization.
 
     Args:
         job_id: Job identifier
@@ -229,7 +245,7 @@ async def _process_audio_async(
         wav_path: Path where converted WAV file should be saved
         language: Language code for transcription
         whisper_model: Whisper model size to use
-        num_speakers: Number of speakers hint
+        num_speakers: Expected number of speakers (hint for WhisperX diarization)
 
     Raises:
         Various exceptions from services (InvalidAudioError, TranscriptionError, etc.)
@@ -240,30 +256,67 @@ async def _process_audio_async(
     # Get audio info
     audio_info = await audio_processor.get_audio_info(wav_path)
 
-    # Run transcription and diarization in parallel for performance
-    transcription_result, diarization_result = await asyncio.gather(
-        transcription_service.transcribe(wav_path, language, whisper_model),
-        diarization_service.diarize(wav_path, num_speakers)
+    logger.info(
+        f"Processing audio file with duration {audio_info['duration']:.2f}s"
+        + (f", {num_speakers} expected speakers" if num_speakers else "")
     )
 
-    # Format and align segments
-    trans_segments = transcription_service.format_segments(transcription_result)
-    aligned_segments = alignment_service.align(trans_segments, diarization_result['segments'])
-    speaker_timeline = alignment_service.get_speaker_timeline(aligned_segments)
-    speaker_groups = alignment_service.group_by_speaker(aligned_segments)
+    # Run WhisperX transcription with alignment and diarization
+    transcription_result = await transcription_service.transcribe(
+        wav_path,
+        language,
+        whisper_model,
+        num_speakers
+    )
+
+    # Format segments (includes speaker labels from WhisperX diarization)
+    segments = transcription_service.format_segments(transcription_result)
+
+    # Extract metadata from results
+    full_text = transcription_result.get('text', '')
+    detected_language = transcription_result.get('language', 'unknown')
+
+    # Extract speaker data from WhisperX results
+    detected_speakers = len(set(
+        seg.get('speaker') for seg in segments if seg.get('speaker')
+    )) if any(seg.get('speaker') for seg in segments) else None
+
+    # Build speaker timeline (human-readable format)
+    speaker_timeline = None
+    if detected_speakers:
+        timeline_lines = []
+        for seg in segments:
+            if seg.get('speaker'):
+                timestamp = f"{int(seg['start'] // 60):02d}:{int(seg['start'] % 60):02d}"
+                timeline_lines.append(f"[{timestamp}] {seg['speaker']}: {seg['text'][:50]}...")
+        speaker_timeline = '\n'.join(timeline_lines) if timeline_lines else None
+
+    # Build speaker groups (segments grouped by speaker)
+    speaker_groups = {}
+    if detected_speakers:
+        for seg in segments:
+            speaker = seg.get('speaker')
+            if speaker:
+                if speaker not in speaker_groups:
+                    speaker_groups[speaker] = []
+                speaker_groups[speaker].append({
+                    'start': seg['start'],
+                    'end': seg['end'],
+                    'text': seg['text']
+                })
 
     # Update database with results using repository pattern
     with get_repository(TranscriptionRepository) as repo:
         success = repo.update_results(
             job_id=job_id,
             audio_duration=audio_info['duration'],
-            detected_language=transcription_result.get('language', 'unknown'),
-            detected_speakers=diarization_result['num_speakers'],
-            segments=aligned_segments,
-            full_text=transcription_result.get('text', ''),
+            detected_language=detected_language,
+            segments=segments,
+            full_text=full_text,
+            wav_path=str(wav_path),
+            detected_speakers=detected_speakers,
             speaker_timeline=speaker_timeline,
-            speaker_groups=speaker_groups,
-            wav_path=str(wav_path)
+            speaker_groups=speaker_groups if speaker_groups else None
         )
 
         if not success:
@@ -272,9 +325,9 @@ async def _process_audio_async(
 
     logger.info(
         f"Processing complete for job {job_id}: "
-        f"{len(aligned_segments)} segments, "
-        f"{diarization_result['num_speakers']} speakers, "
+        f"{len(segments)} segments, "
         f"{audio_info['duration']:.2f}s duration"
+        + (f", {detected_speakers} speakers detected" if detected_speakers else "")
     )
 
 

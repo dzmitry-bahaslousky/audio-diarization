@@ -118,17 +118,17 @@ class TranscriptionWorkflow:
 
     def validate_params(
         self,
-        num_speakers: Optional[int],
         whisper_model,
-        language: Optional[str]
+        language: Optional[str],
+        num_speakers: Optional[int] = None
     ) -> dict:
         """
         Validate transcription parameters.
 
         Args:
-            num_speakers: Expected number of speakers
             whisper_model: Whisper model size
             language: Language code
+            num_speakers: Expected number of speakers (hint for diarization)
 
         Returns:
             dict: Validated parameters
@@ -137,7 +137,7 @@ class TranscriptionWorkflow:
             ValueError: If validation fails
         """
         return self.validator.validate_transcription_params(
-            num_speakers,
             whisper_model,
-            language
+            language,
+            num_speakers
         )

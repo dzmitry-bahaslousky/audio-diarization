@@ -24,6 +24,8 @@ A production-ready web application that transcribes audio files and identifies s
 ## Prerequisites
 
 - **Python 3.10 or higher**
+- **PyTorch 2.0 or higher** - ML framework (automatically installed via requirements.txt)
+  - **Note**: PyTorch 2.6+ is fully supported with automatic compatibility handling
 - **FFmpeg** - Audio format conversion
 - **PostgreSQL** - Job persistence and result storage
 - **Redis** - Message broker for Celery tasks
@@ -429,6 +431,7 @@ Transcription (Whisper) and diarization (Pyannote) run **simultaneously** using 
 3. **Error Handling** - Custom exception hierarchy distinguishing transient vs permanent errors
 4. **Retry Logic** - Automatic retry with exponential backoff for transient failures
 5. **Service Singletons** - ML models loaded once per worker and cached globally
+6. **PyTorch Compatibility** - Monkey-patch approach for PyTorch 2.6+ compatibility with WhisperX models
 
 ## Testing
 
@@ -506,6 +509,25 @@ For Mac M1/M2 (MPS):
 - Verify your `HF_TOKEN` is correct in `.env`
 - Check Celery worker logs for detailed error: `docker-compose logs -f` or `celery -A app.celery_app worker --loglevel=debug`
 - First request per worker is slow (loading models) - this is normal
+
+#### PyTorch 2.6+ "WeightsUnpickler error" or "weights_only" Errors
+**Error message**: `WeightsUnpickler error: Unsupported global: GLOBAL collections.defaultdict was not an allowed global by default`
+
+**Cause**: PyTorch 2.6+ changed the default value of `weights_only` from `False` to `True` in `torch.load()` for security. WhisperX models use pickle features that require `weights_only=False`.
+
+**Solution**: The application automatically handles this via a monkey-patch in both `app/celery_app.py` and `app/main.py`. When you start the server or worker, you should see:
+```
+[FASTAPI INIT] Patched torch.load to use weights_only=False for model loading
+[CELERY INIT] Patched torch.load to use weights_only=False for model loading
+```
+
+**If you still see this error**:
+- Verify you're running the latest version of the code
+- Check that `app/celery_app.py` and `app/main.py` contain the torch.load monkey-patch
+- Ensure the patch is executed BEFORE any model imports (it should be near the top of both files)
+- Try restarting both the FastAPI server and Celery worker
+
+**Note**: This fix is safe because all models are loaded from trusted sources (OpenAI, HuggingFace) controlled by the application configuration.
 
 #### "FFmpeg not found" or Audio Processing Errors
 - Install FFmpeg using the instructions above

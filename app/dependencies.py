@@ -13,8 +13,6 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.services.audio_processor import AudioProcessor
 from app.services.transcription import TranscriptionService
-from app.services.diarization import DiarizationService
-from app.services.alignment import AlignmentService
 from app.services.export import ExportService
 from app.services.transcription_workflow import TranscriptionWorkflow
 from app.repositories.transcription_repository import TranscriptionRepository
@@ -45,32 +43,6 @@ def get_transcription_service() -> TranscriptionService:
         TranscriptionService instance
     """
     return TranscriptionService()
-
-
-@lru_cache()
-def get_diarization_service() -> DiarizationService:
-    """
-    Get or create diarization service singleton.
-
-    Pipeline is loaded lazily on first use and cached.
-
-    Returns:
-        DiarizationService instance
-    """
-    return DiarizationService()
-
-
-@lru_cache()
-def get_alignment_service() -> AlignmentService:
-    """
-    Get or create alignment service singleton.
-
-    Stateless service for aligning transcription with speaker segments.
-
-    Returns:
-        AlignmentService instance
-    """
-    return AlignmentService()
 
 
 @lru_cache()
@@ -124,8 +96,6 @@ def get_transcription_repository(
 
 AudioProcessorDep = Annotated[AudioProcessor, Depends(get_audio_processor)]
 TranscriptionServiceDep = Annotated[TranscriptionService, Depends(get_transcription_service)]
-DiarizationServiceDep = Annotated[DiarizationService, Depends(get_diarization_service)]
-AlignmentServiceDep = Annotated[AlignmentService, Depends(get_alignment_service)]
 ExportServiceDep = Annotated[ExportService, Depends(get_export_service)]
 TranscriptionWorkflowDep = Annotated[TranscriptionWorkflow, Depends(get_transcription_workflow)]
 TranscriptionRepositoryDep = Annotated[TranscriptionRepository, Depends(get_transcription_repository)]

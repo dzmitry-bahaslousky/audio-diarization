@@ -30,7 +30,7 @@ class WhisperModel(str, Enum):
 # Request Models
 class TranscriptionRequest(BaseModel):
     """Request parameters for transcription (excluding file)."""
-    num_speakers: Optional[int] = Field(None, ge=1, le=10, description="Expected number of speakers")
+    num_speakers: Optional[int] = Field(None, ge=1, le=10, description="Expected number of speakers (hint for diarization)")
     whisper_model: WhisperModel = Field(WhisperModel.MEDIUM, description="Whisper model to use")
     language: Optional[str] = Field(None, max_length=5, description="Audio language code (e.g., 'en', 'es')")
 
@@ -60,12 +60,12 @@ class TranscriptionStatusResponse(BaseModel):
     error: Optional[str] = None
 
 
-class SpeakerSegment(BaseModel):
-    """Individual speaker segment in transcription."""
+class TranscriptionSegment(BaseModel):
+    """Individual segment in transcription."""
     start: float = Field(..., description="Start time in seconds")
     end: float = Field(..., description="End time in seconds")
-    speaker: str = Field(..., description="Speaker label (e.g., 'SPEAKER_00')")
     text: str = Field(..., description="Transcribed text")
+    speaker: Optional[str] = Field(None, description="Speaker label (e.g., 'SPEAKER_00')")
     confidence: Optional[float] = Field(None, ge=0.0, le=1.0, description="Confidence score")
 
 
@@ -76,7 +76,7 @@ class TranscriptionResult(BaseModel):
     audio_duration: float = Field(..., description="Duration in seconds")
     num_speakers: int = Field(..., description="Number of speakers detected")
     language: Optional[str] = Field(None, description="Detected language")
-    segments: list[SpeakerSegment] = Field(..., description="Transcribed segments with speakers")
+    segments: list[TranscriptionSegment] = Field(..., description="Transcribed segments with speaker labels")
     created_at: datetime
     completed_at: datetime
     processing_time: float = Field(..., description="Processing time in seconds")

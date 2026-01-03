@@ -1,7 +1,7 @@
 """Application configuration using Pydantic Settings."""
 
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -17,16 +17,20 @@ class Settings(BaseSettings):
         extra="ignore"
     )
 
-    # Hugging Face Authentication
-    hf_token: str = Field(..., description="Hugging Face API token")
-
     # Whisper Configuration
-    whisper_model: Literal["tiny", "base", "small", "medium", "large", "large-v2", "large-v3"] = "medium"
-    whisper_device: Literal["cpu", "cuda", "mps"] = "cpu"
+    whisper_model: Literal["tiny", "base", "small", "medium", "large", "large-v2", "large-v3", "turbo"] = "medium"
+    whisper_device: Literal["cpu", "cuda", "mps"] = "cpu"  # NOTE: MPS not supported by faster-whisper
 
-    # Pyannote Configuration
-    diarization_device: Literal["cpu", "cuda", "mps"] = "cpu"
-    diarization_model: str = "pyannote/speaker-diarization-community-1"
+    # WhisperX Performance Settings
+    whisperx_compute_type: Literal["float16", "int8", "float32"] = "int8"  # int8 recommended for CPU
+    whisperx_batch_size: int = Field(16, ge=1, le=32, description="Batch size for inference (higher=faster but more memory)")
+    whisperx_enable_alignment: bool = Field(True, description="Enable word-level timestamps via wav2vec2")
+    whisperx_enable_diarization: bool = Field(True, description="Enable speaker identification")
+    whisperx_min_speakers: Optional[int] = Field(None, ge=1, le=10, description="Minimum expected speakers (optional)")
+    whisperx_max_speakers: Optional[int] = Field(None, ge=1, le=10, description="Maximum expected speakers (optional)")
+
+    # Hugging Face Token (required for WhisperX diarization)
+    hf_token: str = Field(..., description="Hugging Face API token for diarization models")
 
     # Application Settings
     max_upload_size_mb: int = Field(500, ge=1, le=1000)

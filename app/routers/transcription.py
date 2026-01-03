@@ -46,46 +46,6 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-def optional_int_form(
-    num_speakers: str = Form(
-        "",
-        description="Expected number of speakers (1-10)",
-        example="2"
-    )
-) -> Optional[int]:
-    """
-    Convert form field to optional int, treating empty strings as None.
-
-    This handles HTML forms where empty fields send "" instead of null.
-    Validates that num_speakers is between 1 and 10 if provided.
-
-    Args:
-        num_speakers: Form field value
-
-    Returns:
-        Parsed integer or None if empty
-
-    Raises:
-        HTTPException: If value is not empty and not a valid integer or out of range
-    """
-    if num_speakers == "" or num_speakers is None:
-        return None
-
-    try:
-        num = int(num_speakers)
-        if not (1 <= num <= 10):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="num_speakers must be between 1 and 10"
-            )
-        return num
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"num_speakers must be a valid integer, got: {num_speakers}"
-        )
-
-
 def optional_language_form(
     language: str = Form(
         "",
@@ -122,6 +82,49 @@ def optional_language_form(
     return language
 
 
+def optional_int_form(
+    num_speakers: str = Form(
+        "",
+        description="Expected number of speakers (hint for diarization)",
+        example="2"
+    )
+) -> Optional[int]:
+    """
+    Convert form field to optional integer, treating empty strings as None.
+
+    Validates that num_speakers is between 1 and 10 if provided.
+
+    Args:
+        num_speakers: Form field value
+
+    Returns:
+        Integer value or None if empty
+
+    Raises:
+        HTTPException: If num_speakers is invalid or out of range
+    """
+    if num_speakers == "" or num_speakers is None:
+        return None
+
+    num_speakers = num_speakers.strip()
+
+    try:
+        value = int(num_speakers)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="num_speakers must be an integer"
+        )
+
+    if value < 1 or value > 10:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="num_speakers must be between 1 and 10"
+        )
+
+    return value
+
+
 @router.post(
     "/transcribe",
     response_model=TranscriptionJobResponse,
@@ -145,7 +148,7 @@ async def transcribe_audio(
 
     Args:
         file: Audio file (MP3, WAV, M4A, etc.)
-        num_speakers: Optional hint for number of speakers
+        num_speakers: Expected number of speakers (hint for WhisperX diarization)
         whisper_model: Whisper model to use (larger = more accurate but slower)
         language: Optional language code for better accuracy
 
@@ -173,7 +176,7 @@ async def transcribe_audio(
 
     # Validate parameters using workflow
     try:
-        params = workflow.validate_params(num_speakers, whisper_model, language)
+        params = workflow.validate_params(whisper_model, language, num_speakers)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -305,8 +308,8 @@ async def export_txt(
         job_id: Unique job identifier
         format: Export format variant
             - 'simple': Just the transcription text
-            - 'timeline': Text with speaker labels
-            - 'detailed': Text with timestamps and speakers
+            - 'timeline': Text with timestamps
+            - 'detailed': Text with full timestamps (start and end times)
 
     Returns:
         Formatted plain text transcription

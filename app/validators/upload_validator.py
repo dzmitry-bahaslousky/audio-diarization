@@ -73,17 +73,17 @@ class UploadValidator:
 
     @staticmethod
     def validate_transcription_params(
-        num_speakers: Optional[int],
         whisper_model: WhisperModel,
-        language: Optional[str]
+        language: Optional[str],
+        num_speakers: Optional[int] = None
     ) -> dict:
         """
         Validate transcription parameters.
 
         Args:
-            num_speakers: Expected number of speakers (1-10)
             whisper_model: Whisper model size
             language: Language code
+            num_speakers: Expected number of speakers (hint for diarization)
 
         Returns:
             dict: Validated parameters ready for database
@@ -92,12 +92,6 @@ class UploadValidator:
             ValueError: If validation fails
         """
         params = {}
-
-        # Validate num_speakers
-        if num_speakers is not None:
-            if not (1 <= num_speakers <= 10):
-                raise ValueError("num_speakers must be between 1 and 10")
-            params['num_speakers'] = num_speakers
 
         # Validate whisper_model (already validated by Pydantic enum)
         params['whisper_model'] = whisper_model.value
@@ -115,6 +109,16 @@ class UploadValidator:
                 raise ValueError("Language code contains invalid characters")
 
             params['language'] = language
+
+        # Validate num_speakers
+        if num_speakers is not None:
+            if not isinstance(num_speakers, int):
+                raise ValueError("num_speakers must be an integer")
+
+            if num_speakers < 1 or num_speakers > 10:
+                raise ValueError("num_speakers must be between 1 and 10")
+
+            params['num_speakers'] = num_speakers
 
         logger.debug(f"Transcription params validated: {params}")
 

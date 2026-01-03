@@ -14,6 +14,25 @@ from app.routers import transcription
 # Suppress torchcodec warning (we use ffmpeg-python for audio processing)
 warnings.filterwarnings("ignore", message=".*torchcodec.*")
 
+# Fix PyTorch 2.6 weights_only=True default for model loading
+# Monkey-patch torch.load to use weights_only=False for trusted model sources
+import torch
+
+_original_torch_load = torch.load
+
+def _trusted_load(*args, **kwargs):
+    """Wrapper for torch.load that defaults to weights_only=False.
+
+    PyTorch 2.6+ defaults to weights_only=True for security, but WhisperX
+    models use pickle features that require weights_only=False.
+    This is safe for models from trusted sources (OpenAI, HuggingFace).
+    """
+    kwargs['weights_only'] = False
+    return _original_torch_load(*args, **kwargs)
+
+torch.load = _trusted_load
+print("[FASTAPI INIT] Patched torch.load to use weights_only=False for model loading")
+
 # Configure logging
 logging.basicConfig(
     level=getattr(logging, settings.log_level),

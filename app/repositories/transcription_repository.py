@@ -69,7 +69,7 @@ class TranscriptionRepository:
             upload_path: Path to uploaded file
             whisper_model: Whisper model size
             language: Optional language code
-            num_speakers: Optional number of speakers hint
+            num_speakers: Expected number of speakers (hint for diarization)
 
         Returns:
             TranscriptionJob: Created job object
@@ -182,12 +182,12 @@ class TranscriptionRepository:
         job_id: str,
         audio_duration: float,
         detected_language: str,
-        detected_speakers: int,
         segments: List[dict],
         full_text: str,
-        speaker_timeline: str,
-        speaker_groups: dict,
-        wav_path: Optional[str] = None
+        wav_path: Optional[str] = None,
+        detected_speakers: Optional[int] = None,
+        speaker_timeline: Optional[str] = None,
+        speaker_groups: Optional[dict] = None
     ) -> bool:
         """
         Update job with processing results and mark as completed.
@@ -196,12 +196,12 @@ class TranscriptionRepository:
             job_id: Job identifier
             audio_duration: Duration of audio in seconds
             detected_language: Detected language code
-            detected_speakers: Number of detected speakers
-            segments: List of aligned segments
+            segments: List of transcription segments (with speaker labels from WhisperX)
             full_text: Complete transcription text
-            speaker_timeline: Formatted speaker timeline
-            speaker_groups: Segments grouped by speaker
             wav_path: Optional path to converted WAV file
+            detected_speakers: Number of speakers detected by WhisperX diarization
+            speaker_timeline: Human-readable speaker timeline
+            speaker_groups: Segments grouped by speaker
 
         Returns:
             bool: True if updated, False if job not found
@@ -220,19 +220,27 @@ class TranscriptionRepository:
                 job.completed_at = datetime.utcnow()
                 job.audio_duration = audio_duration
                 job.detected_language = detected_language
-                job.detected_speakers = detected_speakers
                 job.segments = segments
                 job.full_text = full_text
-                job.speaker_timeline = speaker_timeline
-                job.speaker_groups = speaker_groups
 
                 if wav_path:
                     job.wav_path = wav_path
 
+                # Update speaker-related fields from WhisperX diarization
+                if detected_speakers is not None:
+                    job.detected_speakers = detected_speakers
+
+                if speaker_timeline:
+                    job.speaker_timeline = speaker_timeline
+
+                if speaker_groups:
+                    job.speaker_groups = speaker_groups
+
                 logger.info(
                     f"Updated job {job_id} with results: "
-                    f"{len(segments)} segments, {detected_speakers} speakers, "
+                    f"{len(segments)} segments, "
                     f"{audio_duration:.2f}s duration"
+                    + (f", {detected_speakers} speakers" if detected_speakers else "")
                 )
 
                 return True

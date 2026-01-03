@@ -26,14 +26,14 @@ class ExportService:
     @staticmethod
     def format_txt_timeline(result: Dict, metadata: Dict) -> str:
         """
-        Generate timeline format with speaker labels.
+        Generate timeline format with timestamps and speaker labels.
 
         Args:
             result: Transcription result dict
             metadata: Job metadata
 
         Returns:
-            Formatted text with speaker labels
+            Formatted text with timestamps and speakers
         """
         lines = []
 
@@ -41,14 +41,30 @@ class ExportService:
         lines.append(f"Transcription: {metadata.get('filename', 'Unknown')}")
         lines.append(f"Duration: {result.get('audio_duration', 0):.2f}s")
         lines.append(f"Language: {result.get('language', 'unknown').upper()}")
-        lines.append(f"Speakers: {result.get('num_speakers', 0)}")
+
+        # Add speaker count if available
+        num_speakers = result.get('num_speakers')
+        if num_speakers:
+            lines.append(f"Speakers: {num_speakers}")
+
         lines.append(f"Date: {metadata.get('completed_at', datetime.utcnow()).strftime('%Y-%m-%d %H:%M:%S')}")
         lines.append("")
         lines.append("=" * 60)
         lines.append("")
 
-        # Use pre-formatted speaker timeline
-        lines.append(result.get('speaker_timeline', '').strip())
+        # Add segments with timestamps and speaker labels
+        segments = result.get('segments', [])
+        for segment in segments:
+            start = segment['start']
+            text = segment['text'].strip()
+            timestamp = ExportService._format_timestamp(start)
+
+            # Add speaker label if available
+            speaker = segment.get('speaker')
+            if speaker:
+                lines.append(f"[{timestamp}] [{speaker}] {text}")
+            else:
+                lines.append(f"[{timestamp}] {text}")
 
         return '\n'.join(lines)
 
@@ -62,7 +78,7 @@ class ExportService:
             metadata: Job metadata
 
         Returns:
-            Detailed formatted text with timestamps
+            Detailed formatted text with timestamps and speakers
         """
         lines = []
 
@@ -70,7 +86,12 @@ class ExportService:
         lines.append(f"Transcription: {metadata.get('filename', 'Unknown')}")
         lines.append(f"Duration: {result.get('audio_duration', 0):.2f}s")
         lines.append(f"Language: {result.get('language', 'unknown').upper()}")
-        lines.append(f"Speakers: {result.get('num_speakers', 0)}")
+
+        # Add speaker count if available
+        num_speakers = result.get('num_speakers')
+        if num_speakers:
+            lines.append(f"Speakers: {num_speakers}")
+
         lines.append(f"Model: {metadata.get('whisper_model', 'unknown')}")
         lines.append(f"Created: {metadata.get('created_at', datetime.utcnow()).strftime('%Y-%m-%d %H:%M:%S')}")
         lines.append(f"Completed: {metadata.get('completed_at', datetime.utcnow()).strftime('%Y-%m-%d %H:%M:%S')}")
@@ -78,24 +99,29 @@ class ExportService:
         lines.append("=" * 60)
         lines.append("")
 
-        # Add segments with timestamps
+        # Add segments with timestamps and speaker labels
         segments = result.get('segments', [])
         for segment in segments:
             start = segment['start']
             end = segment['end']
-            speaker = segment['speaker']
             text = segment['text'].strip()
 
-            # Format: [00:00:12 - 00:00:15] SPEAKER_00: Hello, how are you?
+            # Format: [00:00:12 - 00:00:15] [SPEAKER_00] Hello, how are you?
             timestamp = f"[{ExportService._format_timestamp(start)} - {ExportService._format_timestamp(end)}]"
-            lines.append(f"{timestamp} {speaker}: {text}")
+
+            # Add speaker label if available
+            speaker = segment.get('speaker')
+            if speaker:
+                lines.append(f"{timestamp} [{speaker}] {text}")
+            else:
+                lines.append(f"{timestamp} {text}")
 
         return '\n'.join(lines)
 
     @staticmethod
     def format_json(result: Dict, metadata: Dict, job_id: str) -> str:
         """
-        Generate structured JSON export.
+        Generate structured JSON export with speaker information.
 
         Args:
             result: Transcription result dict
@@ -114,16 +140,21 @@ class ExportService:
                 'whisper_model': metadata.get('whisper_model'),
                 'audio_duration': result.get('audio_duration'),
                 'language': result.get('language'),
-                'num_speakers': result.get('num_speakers'),
-                'num_segments': result.get('num_segments')
+                'num_segments': result.get('num_segments'),
+                'num_speakers': result.get('num_speakers')
             },
             'transcription': {
                 'full_text': result.get('text'),
-                'segments': result.get('segments', []),
-                'speaker_timeline': result.get('speaker_timeline'),
-                'speaker_groups': result.get('speaker_groups', {})
+                'segments': result.get('segments', [])
             }
         }
+
+        # Add speaker information if available (from WhisperX diarization)
+        if result.get('speaker_timeline'):
+            export_data['speaker_timeline'] = result.get('speaker_timeline')
+
+        if result.get('speaker_groups'):
+            export_data['speaker_groups'] = result.get('speaker_groups')
 
         return json.dumps(export_data, indent=2, ensure_ascii=False)
 

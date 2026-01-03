@@ -50,17 +50,17 @@ class InvalidConfigurationError(PermanentError):
 
 # Service-specific errors
 class TranscriptionError(AudioDiarizationException):
-    """Whisper transcription failed."""
+    """WhisperX transcription failed."""
     pass
 
 
-class DiarizationError(AudioDiarizationException):
-    """Pyannote diarization failed."""
+class AlignmentError(TransientError):
+    """WhisperX alignment failed (wav2vec2 word-level timestamps). Retryable."""
     pass
 
 
-class AlignmentError(AudioDiarizationException):
-    """Alignment between transcription and diarization failed."""
+class DiarizationError(TransientError):
+    """WhisperX diarization failed (speaker identification). Retryable."""
     pass
 
 
