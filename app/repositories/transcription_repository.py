@@ -1,15 +1,33 @@
-"""Repository for transcription job data access with automatic transaction management."""
+"""Repository for transcription job data access with automatic transaction management.
+
+This module implements the Repository pattern to encapsulate all database operations
+for transcription jobs, providing:
+- Clean separation between data access and business logic
+- Automatic transaction management with rollback on errors
+- Type-safe database operations
+- Centralized error handling for database operations
+
+Design Patterns:
+- Repository Pattern: Encapsulates data access logic
+- Unit of Work Pattern: Transaction management via context managers
+- Dependency Injection: Repository receives session from caller
+"""
 
 from contextlib import contextmanager
-from datetime import datetime
-from typing import Optional, List
+from datetime import datetime, timezone
+from typing import Optional, List, Dict, Any, Generator
 from sqlalchemy.orm import Session
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 import logging
 
 from app.models.database import TranscriptionJob
 from app.models.schemas import TranscriptionStatus
-from app.exceptions import JobCreationError, JobNotFoundError, DatabaseConnectionError
+from app.exceptions import (
+    JobCreationError,
+    JobNotFoundError,
+    DatabaseConnectionError,
+    ValidationError
+)
 
 logger = logging.getLogger(__name__)
 
@@ -18,36 +36,89 @@ class TranscriptionRepository:
     """Handles all database operations for transcription jobs with transaction safety."""
 
     def __init__(self, db: Session):
-        """
-        Initialize repository with database session.
+        """Initialize repository with database session.
 
         Args:
-            db: SQLAlchemy session
+            db: SQLAlchemy session (injected dependency)
+
+        Note:
+            The repository does NOT own the session lifecycle.
+            The session is managed by the caller (via get_repository context manager).
         """
         self.db = db
+        self._validate_session()
+
+    def _validate_session(self) -> None:
+        """Validate that the database session is properly configured.
+
+        Raises:
+            ValueError: If session is invalid
+        """
+        if self.db is None:
+            raise ValueError("Database session cannot be None")
+
+        if not isinstance(self.db, Session):
+            raise ValueError(
+                f"Expected SQLAlchemy Session, got {type(self.db).__name__}"
+            )
 
     @contextmanager
-    def transaction(self):
-        """
-        Context manager for database transactions with automatic rollback.
+    def transaction(self) -> Generator[Session, None, None]:
+        """Context manager for database transactions with automatic rollback.
+
+        Provides automatic transaction management:
+        - Commits on successful completion
+        - Rolls back on any exception
+        - Re-raises exceptions after rollback
 
         Usage:
+            ```python
             with repo.transaction():
                 # Database operations
-                self.db.add(...)
+                job = TranscriptionJob(...)
+                self.db.add(job)
                 # Automatic commit on success, rollback on error
+            ```
+
+        Yields:
+            Database session for transaction operations
 
         Raises:
             DatabaseConnectionError: If database error occurs
+            Exception: Other exceptions are re-raised after rollback
+
+        Example:
+            ```python
+            # Multiple operations in a single transaction
+            with repo.transaction():
+                job = repo.create_job(...)
+                repo.update_status(job.id, TranscriptionStatus.PROCESSING)
+                # Both operations committed together
+            ```
         """
         try:
             yield self.db
             self.db.commit()
             logger.debug("Transaction committed successfully")
+
+        except IntegrityError as e:
+            logger.error(f"Database integrity error, rolling back: {e}")
+            self.db.rollback()
+            raise JobCreationError(
+                "Database constraint violation",
+                details={"error": str(e)},
+                original_error=e
+            )
+
         except SQLAlchemyError as e:
             logger.error(f"Database error, rolling back transaction: {e}")
             self.db.rollback()
-            raise DatabaseConnectionError(f"Database operation failed: {e}")
+            raise DatabaseConnectionError(
+                "Database operation failed",
+                details={"error": str(e)},
+                original_error=e
+            )
+
         except Exception as e:
             logger.error(f"Unexpected error, rolling back transaction: {e}")
             self.db.rollback()
