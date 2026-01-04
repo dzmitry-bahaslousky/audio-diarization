@@ -1,6 +1,7 @@
 """Celery application and background tasks with comprehensive error handling."""
 
 from celery import Celery
+from celery.exceptions import SoftTimeLimitExceeded
 from pathlib import Path
 import logging
 import shutil
@@ -61,8 +62,8 @@ celery_app.conf.update(
     timezone='UTC',
     enable_utc=True,
     task_track_started=True,
-    task_time_limit=3600,  # 1 hour max
-    task_soft_time_limit=3300,  # 55 minutes soft limit
+    task_time_limit=settings.celery_task_time_limit,  # Configurable via env
+    task_soft_time_limit=settings.celery_task_soft_time_limit,  # Configurable via env
 )
 
 # Initialize services (singleton pattern for Celery workers)
@@ -201,6 +202,23 @@ def process_transcription_task(self, job_id: str):
             )
         # DON'T cleanup - we'll retry
         raise  # Automatic retry via autoretry_for
+
+    except SoftTimeLimitExceeded:
+        # Task exceeded soft time limit - file is too long for current timeout settings
+        timeout_mins = settings.celery_task_soft_time_limit // 60
+        logger.error(
+            f"Job {job_id} exceeded soft time limit ({timeout_mins} minutes). "
+            "Audio file may be too long for current timeout settings."
+        )
+        error_msg = (
+            f"Processing exceeded time limit ({timeout_mins} minutes). "
+            f"For long audio files, increase CELERY_TASK_SOFT_TIME_LIMIT and "
+            f"CELERY_TASK_TIME_LIMIT in your .env file."
+        )
+        with get_repository(TranscriptionRepository) as repo:
+            repo.update_status(job_id, TranscriptionStatus.FAILED, error_msg)
+        should_cleanup = True  # Cleanup on timeout
+        raise PermanentError(error_msg)
 
     except Exception as e:
         # Unknown errors - retry cautiously
