@@ -293,7 +293,7 @@ class TranscriptionService:
                 str(audio_path)
             )
 
-            # Step 2: Transcribe with batched inference (timeout: 60 minutes)
+            # Step 2: Transcribe with batched inference
             result = await asyncio.wait_for(
                 asyncio.to_thread(
                     self.model.transcribe,
@@ -301,7 +301,7 @@ class TranscriptionService:
                     batch_size=settings.whisperx_batch_size,
                     language=language
                 ),
-                timeout=3600  # 60 minutes
+                timeout=settings.transcription_timeout
             )
 
             # Validate result
@@ -343,7 +343,8 @@ class TranscriptionService:
             return formatted_result
 
         except asyncio.TimeoutError:
-            raise TranscriptionError(f"Transcription timed out after 60 minutes")
+            timeout_min = settings.transcription_timeout // 60
+            raise TranscriptionError(f"Transcription timed out after {timeout_min} minutes")
 
         except Exception as e:
             logger.error(f"Transcription failed for {audio_path}: {e}", exc_info=True)
@@ -389,7 +390,7 @@ class TranscriptionService:
             # Load alignment model for this language
             model_a, metadata = await self.load_alignment_model(language_code)
 
-            # Perform alignment with timeout (10 minutes)
+            # Perform alignment with timeout
             aligned_result = await asyncio.wait_for(
                 asyncio.to_thread(
                     whisperx.align,
@@ -400,7 +401,7 @@ class TranscriptionService:
                     settings.whisper_device,
                     return_char_alignments=False  # Word-level only
                 ),
-                timeout=600  # 10 minutes
+                timeout=settings.alignment_timeout
             )
 
             # Replace segments with aligned version
@@ -412,7 +413,8 @@ class TranscriptionService:
             raise
 
         except asyncio.TimeoutError:
-            raise AlignmentError("Alignment timed out after 10 minutes")
+            timeout_min = settings.alignment_timeout // 60
+            raise AlignmentError(f"Alignment timed out after {timeout_min} minutes")
 
         except Exception as e:
             logger.error(f"Alignment failed: {e}", exc_info=True)
@@ -458,7 +460,7 @@ class TranscriptionService:
 
             logger.info(f"Running diarization (min_speakers={min_speakers}, max_speakers={max_speakers})")
 
-            # Perform diarization with timeout (15 minutes)
+            # Perform diarization with timeout
             diarize_segments = await asyncio.wait_for(
                 asyncio.to_thread(
                     diarize_model,
@@ -466,7 +468,7 @@ class TranscriptionService:
                     min_speakers=min_speakers,
                     max_speakers=max_speakers
                 ),
-                timeout=900  # 15 minutes
+                timeout=settings.diarization_timeout
             )
 
             # Assign speakers to words/segments
@@ -483,7 +485,8 @@ class TranscriptionService:
             return transcription_result
 
         except asyncio.TimeoutError:
-            raise DiarizationError("Diarization timed out after 15 minutes")
+            timeout_min = settings.diarization_timeout // 60
+            raise DiarizationError(f"Diarization timed out after {timeout_min} minutes")
 
         except Exception as e:
             logger.error(f"Diarization failed: {e}", exc_info=True)
