@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     whisperx_min_speakers: Optional[int] = Field(None, ge=1, le=10, description="Minimum expected speakers (optional)")
     whisperx_max_speakers: Optional[int] = Field(None, ge=1, le=10, description="Maximum expected speakers (optional)")
 
+    # Processing Timeout Settings (in seconds)
+    transcription_timeout: int = Field(3600, ge=300, le=7200, description="Timeout for transcription in seconds (default: 60 min)")
+    alignment_timeout: int = Field(1200, ge=60, le=3600, description="Timeout for alignment in seconds (default: 20 min)")
+    diarization_timeout: int = Field(1800, ge=300, le=7200, description="Timeout for diarization in seconds (default: 30 min)")
+
     # Hugging Face Token (required for WhisperX diarization)
     hf_token: str = Field(..., description="Hugging Face API token for diarization models")
 
@@ -60,6 +65,24 @@ class Settings(BaseSettings):
     celery_result_backend: str = Field(
         default="redis://localhost:6379/0",
         description="Celery result backend URL"
+    )
+    celery_worker_concurrency: int = Field(
+        default=2,
+        ge=1,
+        le=16,
+        description="Number of concurrent Celery worker processes (1=sequential, higher=more parallel)"
+    )
+    celery_task_time_limit: int = Field(
+        default=14400,  # 4 hours
+        ge=3600,
+        le=28800,  # Max 8 hours
+        description="Hard time limit for Celery tasks in seconds (task killed after this)"
+    )
+    celery_task_soft_time_limit: int = Field(
+        default=12600,  # 3.5 hours (leaves 30 min for cleanup before hard limit)
+        ge=3000,
+        le=25200,
+        description="Soft time limit for Celery tasks in seconds (SoftTimeLimitExceeded raised)"
     )
 
     @field_validator("allowed_extensions")
