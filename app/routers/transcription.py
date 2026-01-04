@@ -197,6 +197,14 @@ async def transcribe_audio(
             detail=str(e)
         )
 
+    # Verify file was actually saved before proceeding
+    if not upload_path.exists():
+        logger.error(f"Upload file not found after save: {upload_path}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to save uploaded file - file not found after save operation"
+        )
+
     # Create database record using repository (with automatic transaction management)
     try:
         job = repo.create_job(
