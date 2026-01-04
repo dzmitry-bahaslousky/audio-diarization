@@ -40,15 +40,20 @@ def receive_checkout(dbapi_conn, connection_record, connection_proxy):
 @event.listens_for(Engine, "before_cursor_execute", named=True)
 def receive_before_cursor_execute(**kw):
     """Store query execution start time for performance monitoring."""
-    kw['connection_proxy']._query_start_time = time.perf_counter()
+    conn = kw.get('conn')
+    if conn is not None:
+        # Store timing in connection info dict (DBAPI connection attribute)
+        if not hasattr(conn, 'info'):
+            conn.info = {}
+        conn.info['query_start_time'] = time.perf_counter()
 
 
 @event.listens_for(Engine, "after_cursor_execute", named=True)
 def receive_after_cursor_execute(**kw):
     """Log slow queries for performance analysis."""
-    connection_proxy = kw['connection_proxy']
-    if hasattr(connection_proxy, '_query_start_time'):
-        elapsed = time.perf_counter() - connection_proxy._query_start_time
+    conn = kw.get('conn')
+    if conn is not None and hasattr(conn, 'info') and 'query_start_time' in conn.info:
+        elapsed = time.perf_counter() - conn.info['query_start_time']
         if elapsed > 1.0:  # Log queries taking more than 1 second
             logger.warning(
                 f"Slow query detected: {elapsed:.2f}s - {kw['statement']}"
